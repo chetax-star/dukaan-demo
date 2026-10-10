@@ -69,7 +69,7 @@ function App() {
   const handleCheckout = async () => {
     try {
       // Step 1: Backend pe Razorpay order create karo
-      const response = await fetch('https://dukaan-demo.onrender.com//api/create-order', {
+      const response = await fetch('https://dukaan-demo.onrender.com/api/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: cartTotal })
@@ -91,7 +91,7 @@ function App() {
         description: `Order of ${cartCount} items`,
         order_id: data.orderId,
         handler: async function (paymentResponse) {
-          const verifyRes = await fetch('https://dukaan-demo.onrender.com//api/verify-payment', {
+          const verifyRes = await fetch('https://dukaan-demo.onrender.com/api/verify-payment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
