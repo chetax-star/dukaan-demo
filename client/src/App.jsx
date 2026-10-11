@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
-const MENU = [
+const FALLBACK_MENU = [
   { id: 1, name: "Dal Makhani", price: 180, category: "Main", img: "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400" },
   { id: 2, name: "Butter Chicken", price: 320, category: "Main", img: "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=400" },
   { id: 3, name: "Paneer Tikka", price: 220, category: "Starter", img: "https://images.unsplash.com/photo-1567188040759-fb8a883dc6d8?w=400" },
@@ -14,6 +14,8 @@ const MENU = [
   { id: 10, name: "Cold Drink", price: 40, category: "Drink", img: "https://images.unsplash.com/photo-1581636625402-29b2a704ef13?w=400" },
 ];
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:5001/api' : 'https://dukaan-demo.onrender.com/api');
+
 const TIME_SLOTS = [
   "12:00 - 13:00",
   "13:00 - 14:00",
@@ -23,6 +25,7 @@ const TIME_SLOTS = [
 ];
 
 function App() {
+  const [menu, setMenu] = useState(FALLBACK_MENU);
   const [booking, setBooking] = useState({
     name: "",
     phone: "",
@@ -33,6 +36,13 @@ function App() {
 
   const [bookingDone, setBookingDone] = useState(false);
   const [cart, setCart] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/menu`)
+      .then((response) => response.ok ? response.json() : [])
+      .then((items) => { if (Array.isArray(items) && items.length) setMenu(items.map((item) => ({ ...item, id: item._id || item.id }))); })
+      .catch((error) => console.warn('Could not load live menu; using demo menu.', error));
+  }, []);
 
   const handleChange = (e) => {
     setBooking({ ...booking, [e.target.name]: e.target.value });
@@ -46,7 +56,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('https://dukaan-demo.onrender.com/api/bookings', {
+      const response = await fetch(`${API_BASE}/bookings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(booking)
@@ -67,22 +77,29 @@ function App() {
   };
 
   const handleCheckout = async () => {
+    if (!cart.length) {
+      alert('Your cart is empty.');
+      return;
+    }
+
     try {
-      // Step 1: Backend pe Razorpay order create karo
-      const response = await fetch('https://dukaan-demo.onrender.com/api/create-order', {
+      // Send only IDs and quantities. The backend loads current prices from MongoDB.
+      const checkoutItems = cart.map((item) => ({
+        id: String(item.id || item._id || ''),
+        qty: Number(item.qty),
+      }));
+
+      const response = await fetch(`${API_BASE}/create-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: cartTotal })
+        body: JSON.stringify({ items: checkoutItems }),
       });
-
       const data = await response.json();
-
-      if (!data.success) {
-        alert('Failed to create order');
+      if (!response.ok || !data.success) {
+        alert(data.error || 'Failed to create order. Refresh the menu and try again.');
         return;
       }
 
-      // Step 2: Razorpay popup kholo
       const options = {
         key: data.keyId,
         amount: data.amount,
@@ -91,39 +108,46 @@ function App() {
         description: `Order of ${cartCount} items`,
         order_id: data.orderId,
         handler: async function (paymentResponse) {
-          const verifyRes = await fetch('https://dukaan-demo.onrender.com/api/verify-payment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              razorpay_order_id: paymentResponse.razorpay_order_id,
-              razorpay_payment_id: paymentResponse.razorpay_payment_id,
-              razorpay_signature: paymentResponse.razorpay_signature,
-              items: cart,
-              total: cartTotal
-            })
-          });
+          try {
+            const verifyRes = await fetch(`${API_BASE}/verify-payment`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: paymentResponse.razorpay_order_id,
+                razorpay_payment_id: paymentResponse.razorpay_payment_id,
+                razorpay_signature: paymentResponse.razorpay_signature,
+              }),
+            });
+            const verifyData = await verifyRes.json();
 
-          const verifyData = await verifyRes.json();
-
-          if (verifyData.success) {
-            alert(`✅ Payment successful! Order ID: ${verifyData.order.id}`);
-            setCart([]);
-          } else {
-            alert('❌ Payment verification failed');
+            if (verifyRes.ok && verifyData.success) {
+              alert(`✅ Payment successful! Order ID: ${verifyData.order.id}`);
+              setCart([]);
+            } else {
+              alert(verifyData.error || 'Payment status could not be confirmed. Do not pay again yet; check the Razorpay dashboard.');
+              console.error('Payment verification response:', verifyRes.status, verifyData);
+            }
+          } catch (error) {
+            console.error('Payment verification request failed:', error);
+            alert('Payment was submitted, but confirmation could not be checked. Do not pay again yet; check the Razorpay dashboard.');
           }
         },
         prefill: {
           name: booking.name || '',
-          contact: booking.phone || ''
+          contact: booking.phone || '',
         },
-        theme: { color: '#8b4513' }
+        theme: { color: '#8b4513' },
       };
 
       const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', function (response) {
+        console.warn('Razorpay payment failed:', response?.error?.code || 'unknown');
+        alert('Razorpay reports that this payment failed. Check the payment status before trying again.');
+      });
       rzp.open();
     } catch (error) {
-      console.error('Error:', error);
-      alert('Server connection failed!');
+      console.error('Checkout error:', error);
+      alert('Could not start checkout. Check the backend connection and try again.');
     }
   };
 
@@ -209,14 +233,14 @@ function App() {
       <section className="menu">
         <h2>Our Menu</h2>
         <div className="menu-grid">
-          {MENU.map((item) => (
-            <div key={item.id} className="menu-card">
+          {menu.map((item) => (
+            <div key={item.id || item._id} className="menu-card">
               <img src={item.img} alt={item.name} />
               <div className="menu-info">
                 <h3>{item.name}</h3>
                 <p className="category">{item.category}</p>
                 <p className="price">₹{item.price}</p>
-                <button className="add-btn" onClick={() => addToCart(item)}>
+                <button className="add-btn" onClick={() => addToCart({ ...item, id: item.id || item._id })}>
                   Add to Order
                 </button>
               </div>
