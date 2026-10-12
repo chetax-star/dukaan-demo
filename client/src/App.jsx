@@ -36,7 +36,39 @@ function App() {
 
   const [bookingDone, setBookingDone] = useState(false);
   const [cart, setCart] = useState([]);
-  const [confirmedOrder, setConfirmedOrder] = useState(null);
+  const [menuSearch, setMenuSearch] = useState('');
+const [confirmedOrder, setConfirmedOrder] = useState(() => {
+  // Tracking link khula hai toh confirmation screen mat dikhana.
+  if (window.location.hash.startsWith('#track=')) {
+    return null;
+  }
+
+  try {
+    const saved = sessionStorage.getItem('dukaan-confirmed-order');
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+});
+
+  const [isTrackingPage, setIsTrackingPage] = useState(() =>
+  window.location.hash.startsWith('#track=')
+);
+const [trackedOrder, setTrackedOrder] = useState(null);
+const [trackingLoading, setTrackingLoading] = useState(() =>
+  window.location.hash.startsWith('#track=')
+);
+const [trackingError, setTrackingError] = useState('');
+const filteredMenu = menu.filter((item) => {
+  const query = menuSearch.trim().toLowerCase();
+
+  if (!query) return true;
+
+  const searchableText =
+    `${item.name || ''} ${item.category || ''}`.toLowerCase();
+
+  return searchableText.includes(query);
+});
 
   useEffect(() => {
     fetch(`${API_BASE}/menu`)
@@ -44,6 +76,45 @@ function App() {
       .then((items) => { if (Array.isArray(items) && items.length) setMenu(items.map((item) => ({ ...item, id: item._id || item.id }))); })
       .catch((error) => console.warn('Could not load live menu; using demo menu.', error));
   }, []);
+
+  useEffect(() => {
+    const prefix = '#track=';
+
+    if (!isTrackingPage || !window.location.hash.startsWith(prefix)) return;
+
+    const trackingToken = window.location.hash.slice(prefix.length);
+
+    if (!/^[a-f0-9]{64}$/i.test(trackingToken)) {
+      setTrackingError('This tracking link is invalid.');
+      setTrackingLoading(false);
+      return;
+    }
+
+    const loadTrackedOrder = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/track-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trackingToken }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Unable to load order status.');
+        }
+
+        setTrackedOrder(data.order);
+      } catch (error) {
+        setTrackingError(error.message || 'Unable to load order status.');
+      } finally {
+        setTrackingLoading(false);
+      }
+    };
+
+    loadTrackedOrder();
+  }, [isTrackingPage]);
+
 
   const handleChange = (e) => {
     setBooking({ ...booking, [e.target.name]: e.target.value });
@@ -122,8 +193,25 @@ function App() {
             const verifyData = await verifyRes.json();
 
             if (verifyRes.ok && verifyData.success && verifyData.order) {
-  setConfirmedOrder(verifyData.order);
-  setCart([]);
+
+
+const orderForConfirmation = {
+  ...verifyData.order,
+  trackingToken: data.trackingToken,
+};
+
+try {
+  sessionStorage.setItem(
+    'dukaan-confirmed-order',
+    JSON.stringify(orderForConfirmation)
+  );
+} catch (error) {
+  console.warn('Could not save order confirmation in this tab.', error);
+}
+
+setConfirmedOrder(orderForConfirmation);
+setCart([]);
+
 } else {
               alert(verifyData.error || 'Payment status could not be confirmed. Do not pay again yet; check the Razorpay dashboard.');
               console.error('Payment verification response:', verifyRes.status, verifyData);
@@ -182,7 +270,7 @@ function App() {
 
   const today = new Date().toISOString().split("T")[0];
 
-  
+
   if (confirmedOrder) {
     const orderItems = Array.isArray(confirmedOrder.items)
       ? confirmedOrder.items
@@ -208,7 +296,7 @@ function App() {
           <div className="confirmation-details">
             <div>
               <span>Order number</span>
-              
+
 <strong>{orderNumber}</strong>
 <button
   type="button"
@@ -262,6 +350,130 @@ function App() {
             className="confirmation-button"
             type="button"
             onClick={() => setConfirmedOrder(null)}
+          >
+
+<button
+  className="confirmation-button"
+  type="button"
+
+onClick={() => {
+  const token = confirmedOrder.trackingToken;
+
+  if (!token) {
+    alert('Tracking link is unavailable for this order.');
+    return;
+  }
+
+  window.location.hash = `track=${token}`;
+  setConfirmedOrder(null);
+  setTrackedOrder(null);
+  setTrackingError('');
+  setTrackingLoading(true);
+  setIsTrackingPage(true);
+}}
+
+>
+
+<button
+  className="confirmation-button"
+  type="button"
+  onClick={async () => {
+    const token = confirmedOrder?.trackingToken;
+
+    if (!token) {
+      alert('Tracking link is unavailable for this order.');
+      return;
+    }
+
+    const trackingLink =
+      `${window.location.origin}/#track=${token}`;
+
+    try {
+      await navigator.clipboard.writeText(trackingLink);
+      alert('Tracking link copied. Keep it private.');
+    } catch {
+      window.prompt('Copy your private tracking link:', trackingLink);
+    }
+  }}
+>
+  Copy Tracking Link
+</button>
+
+  Track My Order
+</button>
+
+            Back to menu
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (isTrackingPage) {
+    const items = Array.isArray(trackedOrder?.items)
+      ? trackedOrder.items
+      : [];
+
+    return (
+      <main className="order-confirmation">
+        <section className="confirmation-card">
+          <p className="confirmation-brand">SHARMA JI KA DHABA</p>
+          <h1>Track your order</h1>
+
+          {trackingLoading && <p>Loading order status...</p>}
+
+          {!trackingLoading && trackingError && (
+            <p role="alert">{trackingError}</p>
+          )}
+
+          {!trackingLoading && trackedOrder && (
+            <>
+              <div className="confirmation-details">
+                <div>
+                  <span>Order number</span>
+                  <strong>{trackedOrder.id}</strong>
+                </div>
+                <div>
+                  <span>Payment status</span>
+                  <strong>{trackedOrder.paymentStatus}</strong>
+                </div>
+                <div>
+                  <span>Kitchen status</span>
+                  <strong>{trackedOrder.orderStatus}</strong>
+                </div>
+                <div>
+                  <span>Total</span>
+                  <strong>
+                    ₹{Number(trackedOrder.total).toLocaleString('en-IN')}
+                  </strong>
+                </div>
+              </div>
+
+              <h2>Your items</h2>
+              <div className="confirmation-items">
+                {items.map((item, index) => (
+                  <div
+                    className="confirmation-item"
+                    key={`${item.id || item.name}-${index}`}
+                  >
+                    <span>{item.name} × {item.qty || 1}</span>
+                    <strong>
+                      ₹{(
+                        Number(item.price || 0) * Number(item.qty || 1)
+                      ).toLocaleString('en-IN')}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button
+            className="confirmation-button"
+            type="button"
+            onClick={() => {
+              window.location.href = window.location.origin;
+            }}
           >
             Back to menu
           </button>
@@ -320,10 +532,53 @@ function App() {
         )}
       </section>
 
-      <section className="menu">
-        <h2>Our Menu</h2>
-        <div className="menu-grid">
-          {menu.map((item) => (
+
+<section className="menu">
+  <h2>Our Menu</h2>
+
+
+<div className="menu-search">
+  <div className="menu-search-field">
+    <svg
+      className="menu-search-icon"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m16 16 4 4" />
+    </svg>
+
+    <input
+      type="search"
+      aria-label="Search menu"
+      placeholder="Search dishes, e.g. Paneer Tikka..."
+      value={menuSearch}
+      onChange={(event) => setMenuSearch(event.target.value)}
+    />
+  </div>
+
+  {menuSearch && (
+    <button
+      type="button"
+      className="menu-search-clear"
+      onClick={() => setMenuSearch('')}
+    >
+      Clear
+    </button>
+  )}
+</div>
+
+
+  <div className="menu-grid">
+
+          {filteredMenu.map((item) => (
             <div key={item.id || item._id} className="menu-card">
               <img src={item.img} alt={item.name} />
               <div className="menu-info">
@@ -336,6 +591,11 @@ function App() {
               </div>
             </div>
           ))}
+          {filteredMenu.length === 0 && (
+    <p className="menu-empty">
+      No dishes found. Try another search.
+    </p>
+  )}
         </div>
       </section>
 

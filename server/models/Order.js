@@ -14,6 +14,14 @@ const orderSchema = new mongoose.Schema({
     sparse: true,
     unique: true,
   },
+
+
+  trackingTokenHash: {
+    type: String,
+    select: false,
+    index: true,
+  },
+
   items: [
     {
       id: { type: String, required: true },

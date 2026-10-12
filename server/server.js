@@ -282,10 +282,18 @@ app.post('/api/create-order', async (req, res) => {
     };
 
     const razorpayOrder = await razorpay.orders.create(options);
+
+    const trackingToken = crypto.randomBytes(32).toString('hex');
+
+const trackingTokenHash = crypto
+  .createHash('sha256')
+  .update(trackingToken)
+  .digest('hex');
     // Persist the server-priced order before showing checkout, so verify-payment
     // cannot trust item names, quantities or totals sent back by the browser.
     const localOrder = await Order.create({
       razorpay_order_id: razorpayOrder.id,
+      trackingTokenHash,
       items: cart.items,
       total: cart.totalPaise / 100,
       paymentStatus: 'pending',
@@ -299,6 +307,7 @@ app.post('/api/create-order', async (req, res) => {
       amount: razorpayOrder.amount,
       currency: razorpayOrder.currency,
       keyId: process.env.RAZORPAY_KEY_ID,
+      trackingToken,
     });
   } catch (error) {
     console.error('Error creating Razorpay order:', error.message);
@@ -370,6 +379,58 @@ app.post('/api/verify-payment', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Payment verification could not be completed. Check the Razorpay dashboard before retrying.' });
   }
 });
+
+app.post('/api/track-order', async (req, res) => {
+  try {
+    const { trackingToken } = req.body || {};
+
+    if (
+      typeof trackingToken !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(trackingToken)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid tracking token',
+      });
+    }
+
+    const trackingTokenHash = crypto
+      .createHash('sha256')
+      .update(trackingToken)
+      .digest('hex');
+
+    const order = await Order.findOne({
+  trackingTokenHash,
+  paymentStatus: 'paid',
+}).select('_id items total paymentStatus orderStatus createdAt');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found',
+      });
+    }
+
+    return res.json({
+      success: true,
+      order: {
+        id: order._id,
+        items: order.items,
+        total: order.total,
+        paymentStatus: order.paymentStatus,
+        orderStatus: order.orderStatus,
+        createdAt: order.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Order tracking error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Unable to retrieve order status',
+    });
+  }
+});
+
 
 // ---------- ORDERS ----------
 app.get('/api/orders', requireAdmin, async (req, res) => {
