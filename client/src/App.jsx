@@ -36,6 +36,7 @@ function App() {
 
   const [bookingDone, setBookingDone] = useState(false);
   const [cart, setCart] = useState([]);
+  const [confirmedOrder, setConfirmedOrder] = useState(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/menu`)
@@ -120,10 +121,10 @@ function App() {
             });
             const verifyData = await verifyRes.json();
 
-            if (verifyRes.ok && verifyData.success) {
-              alert(`✅ Payment successful! Order ID: ${verifyData.order.id}`);
-              setCart([]);
-            } else {
+            if (verifyRes.ok && verifyData.success && verifyData.order) {
+  setConfirmedOrder(verifyData.order);
+  setCart([]);
+} else {
               alert(verifyData.error || 'Payment status could not be confirmed. Do not pay again yet; check the Razorpay dashboard.');
               console.error('Payment verification response:', verifyRes.status, verifyData);
             }
@@ -180,6 +181,95 @@ function App() {
   const cartCount = cart.reduce((sum, c) => sum + c.qty, 0);
 
   const today = new Date().toISOString().split("T")[0];
+
+  
+  if (confirmedOrder) {
+    const orderItems = Array.isArray(confirmedOrder.items)
+      ? confirmedOrder.items
+      : [];
+
+    const orderNumber =
+      confirmedOrder._id ||
+      confirmedOrder.id ||
+      confirmedOrder.razorpay_order_id;
+
+    return (
+      <main className="order-confirmation">
+        <section className="confirmation-card">
+          <p className="confirmation-brand">SHARMA JI KA DHABA</p>
+
+          <div className="confirmation-check">✓</div>
+
+          <h1>Order confirmed!</h1>
+          <p className="confirmation-message">
+            Your payment has been verified successfully.
+          </p>
+
+          <div className="confirmation-details">
+            <div>
+              <span>Order number</span>
+              
+<strong>{orderNumber}</strong>
+<button
+  type="button"
+  className="copy-order-button"
+  onClick={async () => {
+    try {
+      await navigator.clipboard.writeText(String(orderNumber));
+      alert('Order number copied!');
+    } catch {
+      alert('Copy failed. Please copy the order number manually.');
+    }
+  }}
+>
+  Copy
+</button>
+
+            </div>
+            <div>
+              <span>Payment status</span>
+              <strong>{confirmedOrder.paymentStatus || 'Verified'}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>
+                ₹{Number(confirmedOrder.total || 0).toLocaleString('en-IN')}
+              </strong>
+            </div>
+          </div>
+
+          <h2>Your items</h2>
+
+          <div className="confirmation-items">
+            {orderItems.map((item, index) => (
+              <div
+                className="confirmation-item"
+                key={`${item.id || item._id || item.name}-${index}`}
+              >
+                <span>
+                  {item.name} × {item.qty || 1}
+                </span>
+                <strong>
+                  ₹{(
+                    Number(item.price || 0) * Number(item.qty || 1)
+                  ).toLocaleString('en-IN')}
+                </strong>
+              </div>
+            ))}
+          </div>
+
+          <button
+            className="confirmation-button"
+            type="button"
+            onClick={() => setConfirmedOrder(null)}
+          >
+            Back to menu
+          </button>
+        </section>
+      </main>
+    );
+  }
+
 
   return (
     <div className="app">
